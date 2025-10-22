@@ -7,3 +7,8 @@ build/
 .coverage
 .pytest_cache/
 .DS_Store
+
+# Keys & reports
+IsacTest
+IsacTest.pub
+reports/
