@@ -1,8 +1,17 @@
-# Ensure the project root (the directory containing TestingPy.py) is importable.
-import sys
-import pathlib
+import pytest
+from isac_app.config import AppConfig
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]  # ~/ArcSynerCom
-root_str = str(ROOT)
-if root_str not in sys.path:
-    sys.path.insert(0, root_str)
+class FakeMatlab:
+    def __init__(self):
+        self.calls = []
+    def run(self, func, *args, **kwargs):
+        self.calls.append((func, args, kwargs))
+        return args[0] if args else None
+
+@pytest.fixture
+def cfg():
+    return AppConfig(threshold=0.5, matlab_script="run_pipeline", workdir=".")
+
+@pytest.fixture
+def fake_matlab():
+    return FakeMatlab()
