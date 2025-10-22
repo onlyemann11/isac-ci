@@ -1,0 +1,145 @@
+// ArcPipeline.alt — No pushes. Uses your repo path. Python venv + configurable tests via ci_config.json.
+
+pipeline {
+  agent any
+
+  options { ansiColor('xterm'); timestamps(); timeout(time: 45, unit: 'MINUTES') }
+
+  parameters {
+    string(name: 'BRANCH', defaultValue: 'main', description: 'Branch to checkout from AgileRadioCom-LLC/ArcSynerCom')
+    booleanParam(name: 'RUN_UNIT', defaultValue: true, description: 'Run unit tests')
+    booleanParam(name: 'RUN_INTEGRATION', defaultValue: true, description: 'Run integration tests')
+  }
+
+  environment {
+    REPO_URL = 'git@github.com:AgileRadioCom-LLC/ArcSynerCom.git'
+    CRED_ID  = 'github-arc-ssh'  // ← change to the credential ID that already works for you
+    VENV     = '.venv'
+    PIP_CACHE_DIR = "${WORKSPACE}/.pip-cache"
+  }
+
+  stages {
+
+    stage('Checkout (read-only)') {
+      steps {
+        checkout([
+          $class: 'GitSCM',
+          branches: [[name: "${params.BRANCH}"]],
+          userRemoteConfigs: [[url: "${REPO_URL}", credentialsId: "${CRED_ID}"]]
+        ])
+      }
+    }
+
+    stage('Inventory Files') {
+      steps {
+        sh '''
+          set -euxo pipefail
+          mkdir -p artifacts reports/junit
+          { git ls-files; echo ""; echo "# Untracked:"; git ls-files --others --exclude-standard; } > artifacts/repo-filelist.txt || true
+        '''
+      }
+    }
+
+    stage('Python Setup') {
+      steps {
+        sh '''
+          set -euxo pipefail
+          command -v python3
+          python3 -V
+          if [ ! -d "${VENV}" ]; then python3 -m venv "${VENV}"; fi
+          . "${VENV}/bin/activate"
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            PIP_CACHE_DIR="${PIP_CACHE_DIR}" pip install -r requirements.txt
+          else
+            PIP_CACHE_DIR="${PIP_CACHE_DIR}" pip install pytest pytest-cov
+          fi
+          pytest --version
+        '''
+      }
+    }
+
+    stage('Build (optional)') {
+      steps {
+        sh '''
+          set -euxo pipefail
+          if [ -f scripts/build.sh ]; then
+            bash scripts/build.sh
+          elif [ -f CMakeLists.txt ]; then
+            cmake -S . -B build
+            cmake --build build -j
+          elif [ -f Makefile ]; then
+            make -j
+          elif [ -f package.json ]; then
+            npm ci || npm install
+            npm run build || true
+          elif [ -f pom.xml ]; then
+            mvn -B -ntp -DskipTests compile
+          else
+            echo "No build step detected; skipping"
+          fi
+        '''
+      }
+    }
+
+    stage('Tests (configurable via ci_config.json)') {
+      parallel {
+        stage('Unit') {
+          when { expression { return params.RUN_UNIT } }
+          steps {
+            sh '''
+              set -euxo pipefail
+              . "${VENV}/bin/activate" || true
+              mkdir -p reports/junit/unit
+              python scripts/run_tests.py --suite unit || true
+            '''
+          }
+          post {
+            always {
+              junit testResults: 'reports/junit/unit/**/*.xml', allowEmptyResults: true
+            }
+          }
+        }
+        stage('Integration') {
+          when { expression { return params.RUN_INTEGRATION } }
+          steps {
+            sh '''
+              set -euxo pipefail
+              . "${VENV}/bin/activate" || true
+              mkdir -p reports/junit/integration
+              python scripts/run_tests.py --suite integration || true
+            '''
+          }
+          post {
+            always {
+              junit testResults: 'reports/junit/integration/**/*.xml', allowEmptyResults: true
+            }
+          }
+        }
+      }
+    }
+
+    stage('Package Artifacts') {
+      steps {
+        sh '''
+          set -euxo pipefail
+          mkdir -p artifacts
+          cp -R build artifacts/build 2>/dev/null || true
+          cp -R reports artifacts/reports 2>/dev/null || true
+          tar -czf arc-artifacts.tgz artifacts || true
+        '''
+      }
+    }
+  }
+
+  post {
+    success {
+      archiveArtifacts artifacts: 'arc-artifacts.tgz, artifacts/**, dist/**, **/*.tgz', allowEmptyArchive: true
+      cleanWs()
+    }
+    failure {
+      archiveArtifacts artifacts: 'arc-artifacts.tgz, artifacts/**', allowEmptyArchive: true
+    }
+  }
+}
+

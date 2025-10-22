@@ -1,0 +1,21 @@
+{
+  "python": {
+    "venv": ".venv",
+    "extra_pip_args": ""
+  },
+  "tests": {
+    "unit": {
+      "enabled": true,
+      "paths": ["tests/unit"],
+      "pytest_args": ["-q"],
+      "junit_xml": "reports/junit/unit/results.xml"
+    },
+    "integration": {
+      "enabled": true,
+      "paths": ["tests/integration"],
+      "pytest_args": ["-q"],
+      "junit_xml": "reports/junit/integration/results.xml"
+    }
+  }
+}
+
